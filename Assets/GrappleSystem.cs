@@ -6,115 +6,122 @@ public class GrappleSystem : MonoBehaviour
     public LineRenderer line;
     public LayerMask anchorLayer;
 
-    [Header("Grapple Settings")]
-    public float maxGrappleDistance = 15f;
+    [Header("Rope")]
+    public float maxGrappleDistance = 20f;
+    public float minRopeLength = 0.7f;
+    public float maxRopeLength = 25f;
+    public float reelSpeed = 4f;        // reduced so reeling doesn't explode energy
 
-    [Header("Reel Settings")]
-    public float reelSpeed = 6f;
-    public float minRopeLength = 1f;
-    public float maxRopeLength = 18f;
+    [Header("Swing")]
+    public float swingForce = 5f;       // gentle user push to avoid 360 spins
 
-    private DistanceJoint2D joint;
     private Rigidbody2D rb;
-    private Vector2 grapplePoint;
-    private bool isGrappling;
+    private DistanceJoint2D joint;
+    private Vector2 anchor;
+    private bool grappling;
+
+    public bool IsGrappling => grappling;
 
     void Awake()
     {
         rb = GetComponent<Rigidbody2D>();
+        joint = GetComponent<DistanceJoint2D>();
 
-        // Create joint at runtime
-        joint = gameObject.AddComponent<DistanceJoint2D>();
         joint.enabled = false;
         joint.autoConfigureDistance = false;
-        joint.enableCollision = true;
+        joint.maxDistanceOnly = false;  // rope has fixed length we control
     }
 
     void Update()
     {
-        // Left click = grapple
-        if (Input.GetMouseButtonDown(0))
-            TryGrapple();
+        if (Input.GetMouseButtonDown(0)) TryGrapple();
+        if (Input.GetMouseButtonDown(1)) Release();
 
-        // Right click = release
-        if (Input.GetMouseButtonDown(1))
-            ReleaseGrapple();
+        if (!grappling)
+            return;
 
-        // While grappling
-        if (isGrappling)
-        {
-            HandleReeling();
-            HandleSwingInput();
+        SwingInput();
+        ReelInput();
 
-            // Draw rope
-            line.SetPosition(0, transform.position);
-            line.SetPosition(1, grapplePoint);
-        }
+        ClampSwingSpeed();
+        ApplyDamping();
+
+        line.SetPosition(0, transform.position);
+        line.SetPosition(1, anchor);
     }
 
     void TryGrapple()
     {
-        Vector3 mouseWorld = Camera.main.ScreenToWorldPoint(Input.mousePosition);
-        Vector2 dir = mouseWorld - transform.position;
+        var mouse = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+        Vector2 dir = mouse - transform.position;
 
-        RaycastHit2D hit = Physics2D.Raycast(
+        var hit = Physics2D.Raycast(
             transform.position,
             dir.normalized,
             maxGrappleDistance,
             anchorLayer
         );
 
-        if (!hit)
-            return;
+        if (!hit) return;
 
-        grapplePoint = hit.point;
-        isGrappling = true;
+        anchor = hit.point;
+        grappling = true;
 
         joint.enabled = true;
-        joint.connectedAnchor = grapplePoint;
+        joint.connectedAnchor = anchor;
 
-        // set rope length to current distance initially
-        float startDistance = Vector2.Distance(transform.position, grapplePoint);
-        joint.distance = Mathf.Clamp(startDistance, minRopeLength, maxRopeLength);
+        // set initial rope length to current distance
+        joint.distance = Vector2.Distance(transform.position, anchor);
 
-        // line
         line.positionCount = 2;
-        line.SetPosition(0, transform.position);
-        line.SetPosition(1, grapplePoint);
+        line.SetPosition(1, anchor);
     }
 
-    void ReleaseGrapple()
+    void Release()
     {
-        isGrappling = false;
+        grappling = false;
         joint.enabled = false;
-
         line.positionCount = 0;
     }
 
-    void HandleReeling()
+    // A/D add tangential force (momentum along swing path)
+    void SwingInput()
     {
-        float reelInput = 0f;
+        float x = Input.GetAxisRaw("Horizontal");
+        if (Mathf.Abs(x) < 0.05f) return;
 
-        // reel IN
-        if (Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.UpArrow))
-            reelInput = -1f;
+        Vector2 toAnchor = (anchor - (Vector2)transform.position).normalized;
+        Vector2 tangent = new Vector2(toAnchor.y, -toAnchor.x);
 
-        // reel OUT
-        if (Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.DownArrow))
-            reelInput = 1f;
-
-        if (Mathf.Abs(reelInput) > 0f)
-        {
-            joint.distance += reelInput * reelSpeed * Time.deltaTime;
-            joint.distance = Mathf.Clamp(joint.distance, minRopeLength, maxRopeLength);
-        }
+        rb.AddForce(tangent * x * swingForce, ForceMode2D.Force);
     }
 
-    void HandleSwingInput()
+    // W reel in — S reel out (bounded)
+    void ReelInput()
     {
-        float h = Input.GetAxisRaw("Horizontal");
+        float d = joint.distance;
 
-        if (Mathf.Abs(h) > 0.1f)
-            rb.AddForce(new Vector2(h * 8f, 0f), ForceMode2D.Force);
+        if (Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.UpArrow))
+            d -= reelSpeed * Time.deltaTime;
+
+        if (Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.DownArrow))
+            d += reelSpeed * Time.deltaTime;
+
+        joint.distance = Mathf.Clamp(d, minRopeLength, maxRopeLength);
+    }
+
+    // limits runaway speed (prevents infinite energy buildup)
+    void ClampSwingSpeed()
+    {
+        float maxSpeed = 10f;
+
+        if (rb.linearVelocity.magnitude > maxSpeed)
+            rb.linearVelocity = rb.linearVelocity.normalized * maxSpeed;
+    }
+
+    // subtle drag — keeps motion believable without killing gravity
+    void ApplyDamping()
+    {
+        rb.linearVelocity *= 0.99f;
     }
 }
