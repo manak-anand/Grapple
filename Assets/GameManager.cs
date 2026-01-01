@@ -19,9 +19,13 @@ public class GameManager : MonoBehaviour
     private float timeRemaining;
     private bool ended = false;
 
+    [Header("Audio")]
+    public AudioClip coinSound;
+    private AudioSource audioSource;
+
     void Start()
     {
-        // Count collectibles in scene (Unity 6+ API)
+        // Count collectibles using Unity 6+ API
         totalCollectibles = Object.FindObjectsByType<Collectible>(FindObjectsSortMode.None).Length;
 
         timeRemaining = startTime;
@@ -32,8 +36,10 @@ public class GameManager : MonoBehaviour
         if (endPanel != null)
             endPanel.SetActive(false);
 
-        // make sure game is not paused from previous run
+        // reset pause state (important when restarting)
         Time.timeScale = 1f;
+
+        audioSource = GetComponent<AudioSource>();
     }
 
     void Update()
@@ -58,6 +64,10 @@ public class GameManager : MonoBehaviour
     {
         if (ended)
             return;
+
+        // play sound
+        if (audioSource != null && coinSound != null)
+            audioSource.PlayOneShot(coinSound);
 
         collected++;
         UpdateCollectibleText();
